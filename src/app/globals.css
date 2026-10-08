@@ -1,26 +1,137 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --paper: #f3f2ee;
+  --surface: #ffffff;
+  --ink: #1f2328;
+  --ink-2: #3e454c;
+  --muted: #5e666e;
+  --rule: #dad8d1;
+  --field: #c4c8c3;
+  --amber: #a35f0e;
+  --amber-soft: #f6e7d2;
+  --amber-ink: #7a4508;
+  --green: #2f5d50;
+  --green-soft: #e1ece7;
+  --red: #9a3b2e;
+  --red-soft: #f5e1dd;
+  --granite: #22262b;
+  --on-granite: #f3f2ee;
+  --on-granite-2: #c9cccf;
+  --on-accent: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    color-scheme: dark;
+    --paper: #15181b;
+    --surface: #1d2125;
+    --ink: #e9eae6;
+    --ink-2: #c3c8cc;
+    --muted: #9ea6ae;
+    --rule: #30363c;
+    --field: #454c53;
+    --amber: #e7a04a;
+    --amber-soft: #3a2c1a;
+    --amber-ink: #f2c58c;
+    --green: #86bfaa;
+    --green-soft: #1f302a;
+    --red: #e38b7c;
+    --red-soft: #3a2220;
+    --granite: #0f1113;
+    --on-accent: #15181b;
   }
 }
 
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-field: var(--field);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-amber-ink: var(--amber-ink);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+  --color-granite: var(--granite);
+  --color-on-granite: var(--on-granite);
+  --color-on-granite-2: var(--on-granite-2);
+  --color-on-accent: var(--on-accent);
+  --font-serif: var(--font-caslon), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-plex), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, Menlo, Consolas, monospace;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+/* Damier du cimetière de Morne-à-l'Eau */
+.damier {
+  width: 144px;
+  height: 12px;
+  border: 1px solid currentColor;
+  background-image: conic-gradient(currentColor 25%, transparent 0 50%, currentColor 0 75%, transparent 0);
+  background-size: 24px 24px;
+}
+
+.field {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--field);
+  background: var(--surface);
+  padding: 10px 12px;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 18px;
+  font-weight: 600;
+  background: var(--green);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.btn-amber {
+  background: var(--amber);
+}
+.btn-ghost {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--field);
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
 }

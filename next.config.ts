@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
 
+// Toutes les pages lisent la session ou des données vivantes (bougies, messages) :
+// on reste en rendu dynamique classique plutôt qu'avec Cache Components.
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
   turbopack: {
     rules: {
       "*.css": {
