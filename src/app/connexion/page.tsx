@@ -8,12 +8,18 @@ import { EmailForm } from "./email-form";
 
 export const metadata: Metadata = { title: "Connexion", robots: { index: false } };
 
+function safePath(raw: unknown): string | undefined {
+  return typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") ? raw : undefined;
+}
+
 export default async function SignIn(props: PageProps<"/connexion">) {
   const viewer = await getViewer();
-  const code = (await props.searchParams).code;
-  if (viewer.kind !== "anonymous") {
-    redirect(viewer.kind === "distributor" ? "/pro" : typeof code === "string" ? `/espace/nouveau?code=${code}` : "/espace");
-  }
+  const params = await props.searchParams;
+  const code = typeof params.code === "string" ? params.code : undefined;
+  const next = safePath(params.next) ?? (code ? `/espace/nouveau?code=${code}` : undefined);
+  if (viewer.kind === "family") redirect(next ?? "/espace");
+  if (viewer.kind === "distributor") redirect(next?.startsWith("/invitation") ? "/pro" : (next ?? "/pro"));
+
   return (
     <>
       <SiteHeader viewer={viewer} demo={isDemo} />
@@ -24,12 +30,14 @@ export default async function SignIn(props: PageProps<"/connexion">) {
         </div>
         {isDemo ? (
           <>
-            <p className="text-ink-2">
-              L’application tourne en mode démonstration. Choisissez un rôle pour la découvrir.
-            </p>
+            <p className="text-ink-2">L’application tourne en mode démonstration. Choisissez un rôle pour la découvrir.</p>
             <form action={setDemoRole} className="flex flex-col gap-3">
+              {next && <input type="hidden" name="next" value={next} />}
               <button name="role" value="family" className="btn">
-                Entrer comme une famille
+                Entrer comme Josette, gardienne de la page
+              </button>
+              <button name="role" value="family2" className="btn btn-ghost">
+                Entrer comme Patrick, un proche invité
               </button>
               <button name="role" value="distributor" className="btn btn-ghost">
                 Entrer comme une pompe funèbre
@@ -37,7 +45,7 @@ export default async function SignIn(props: PageProps<"/connexion">) {
             </form>
           </>
         ) : (
-          <EmailForm />
+          <EmailForm next={next} />
         )}
       </main>
     </>

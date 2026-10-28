@@ -95,9 +95,6 @@ export default async function Home() {
           </section>
         )}
       </main>
-      <footer className="border-t border-rule px-4 py-6 text-center text-sm text-muted">
-        Pa Oublié · un service Siboard Consulting · Guadeloupe
-      </footer>
     </>
   );
 }

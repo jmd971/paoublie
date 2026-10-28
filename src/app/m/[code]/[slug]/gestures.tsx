@@ -11,7 +11,9 @@ export function Gestures({ memorialId, path, candles, flowers, visits }: Props) 
   const [f, setF] = useState(flowers);
   const [lit, setLit] = useState(false);
   const [placed, setPlaced] = useState(false);
+  const [note, setNote] = useState("");
   const [, start] = useTransition();
+  const already = "Vous avez déjà fait ce geste aujourd’hui. Revenez demain.";
 
   return (
     <div className="border-b border-rule bg-surface">
@@ -37,7 +39,11 @@ export function Gestures({ memorialId, path, candles, flowers, visits }: Props) 
           onClick={() => {
             setLit(true);
             setC((n) => n + 1);
-            start(async () => setC(await lightCandle(memorialId, path)));
+            start(async () => {
+              const r = await lightCandle(memorialId, path);
+              setC(r.count);
+              if (r.limited) setNote(already);
+            });
           }}
           className={`btn text-sm ${lit ? "border border-amber !bg-amber-soft !text-amber-ink" : "btn-amber"}`}
         >
@@ -49,13 +55,22 @@ export function Gestures({ memorialId, path, candles, flowers, visits }: Props) 
           onClick={() => {
             setPlaced(true);
             setF((n) => n + 1);
-            start(async () => setF(await dropFlower(memorialId, path)));
+            start(async () => {
+              const r = await dropFlower(memorialId, path);
+              setF(r.count);
+              if (r.limited) setNote(already);
+            });
           }}
           className={`btn btn-ghost text-sm ${placed ? "!border-green !bg-green-soft !text-green" : ""}`}
         >
           {placed ? "Fleur déposée" : "Déposer une fleur"}
         </button>
       </div>
+      {note && (
+        <p role="status" className="mx-auto max-w-2xl px-4 pb-3 text-center text-xs text-muted">
+          {note}
+        </p>
+      )}
     </div>
   );
 }
