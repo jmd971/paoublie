@@ -181,13 +181,14 @@ export const supabaseRepo: Repo = {
   },
 
   async lightCandle(memorialId) {
-    const { data, error } = await (await supabaseServer()).rpc("light_candle", { m: memorialId });
+    // Côté serveur seulement, après la limite anti-abus (la fonction n'est pas ouverte au public).
+    const { data, error } = await supabaseAdmin().rpc("light_candle", { m: memorialId });
     if (error) throw error;
     return data as number;
   },
 
   async dropFlower(memorialId) {
-    const { data, error } = await (await supabaseServer()).rpc("drop_flower", { m: memorialId });
+    const { data, error } = await supabaseAdmin().rpc("drop_flower", { m: memorialId });
     if (error) throw error;
     return data as number;
   },
@@ -198,7 +199,8 @@ export const supabaseRepo: Repo = {
   },
 
   async submitMessage(memorialId, input) {
-    const { error } = await (await supabaseServer()).from("messages").insert({
+    // Écrit côté serveur, après les contrôles anti-abus : l'API publique n'accepte pas d'insertion directe.
+    const { error } = await supabaseAdmin().from("messages").insert({
       memorial_id: memorialId,
       author_name: input.authorName,
       author_place: input.authorPlace ?? null,
