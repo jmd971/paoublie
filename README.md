@@ -27,9 +27,23 @@ famille ou comme une pompe funèbre.
 4. Créer les distributeurs dans la table `distributors`, puis lier leur compte : `profiles.role = 'distributor'` et
    `profiles.distributor_id`.
 
-La connexion se fait par lien magique envoyé par e-mail. Le profil d’une famille est créé automatiquement à sa première
-connexion. Variables facultatives : `NEXT_PUBLIC_SITE_URL` (adresse publique, sinon l’URL Vercel), `RATE_LIMIT_SALT`
+La connexion se fait par e-mail et mot de passe (création de compte, « mot de passe oublié »). Le profil d’une famille
+est créé automatiquement à l’inscription. Variables facultatives : `NEXT_PUBLIC_SITE_URL` (adresse publique, sinon l’URL Vercel), `RATE_LIMIT_SALT`
 (sel des empreintes anti-abus), `NEXT_PUBLIC_CONTACT_EMAIL` (contact des pages légales).
+
+### Réglages Supabase pour la connexion
+
+1. **Authentication → URL Configuration** : *Site URL* = `https://paoublie.vercel.app` ; *Redirect URLs* :
+   `https://paoublie.vercel.app/**` et `https://paoublie-*-jean-marcs-projects-b911a161.vercel.app/**`.
+2. **Authentication → Emails → SMTP Settings** : brancher un vrai service d’envoi (Brevo, Resend…). Le service
+   fourni par défaut n’écrit qu’aux membres de l’équipe Supabase, en petite quantité.
+3. **Authentication → Emails → Templates** : pour que les liens marchent même ouverts depuis l’application Gmail
+   (autre navigateur), remplacer le lien des modèles :
+   - *Confirm signup* : `<a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email">Confirmer mon adresse</a>`
+   - *Reset Password* : `<a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=recovery">Choisir un nouveau mot de passe</a>`
+
+   Sans ce changement, tout fonctionne dans le même navigateur ; ouvert ailleurs, la confirmation d’inscription
+   aboutit quand même (on invite à se connecter), mais le lien de mot de passe oublié doit être rouvert sur le même appareil.
 
 ## Organisation du code
 
@@ -38,7 +52,9 @@ connexion. Variables facultatives : `NEXT_PUBLIC_SITE_URL` (adresse publique, si
 | `src/app/m/[code]` | Page ouverte par le scan : le caveau, puis le mémorial de chaque défunt |
 | `src/app/espace` | Espace famille : mémoriaux, souvenirs à valider, création |
 | `src/app/espace/tombe/[id]` | Gestion d’une tombe : défunts, ajout d’un défunt, invitations des proches ; éditeur et envoi de médias |
-| `src/app/invitation/[token]` | Lien reçu par WhatsApp ou SMS : remise de la page à la famille, ou invitation d’un proche |
+| `src/app/connexion` | Connexion et création de compte (deux onglets), mot de passe oublié, nouveau mot de passe |
+| `src/app/auth/callback` | Retour des liens reçus par e-mail (confirmation, mot de passe oublié) |
+| `src/app/invitation/[token]` | Lien reçu par WhatsApp ou SMS : création du compte sur place, puis acceptation automatique |
 | `src/app/pro` | Espace distributeur : ventes, commissions, plaques en stock, génération de lots |
 | `src/app/pro/tombe/[id]` | Suivi d’une famille : lien de remise, règlement marqué par la pompe funèbre |
 | `src/app/mentions-legales`, `cgu`, `confidentialite` | Pages légales (éditeur dans `src/lib/legal.ts`) |

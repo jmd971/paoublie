@@ -49,20 +49,97 @@ export async function signOut() {
   redirect("/");
 }
 
-export async function signInWithEmail(_prev: FormState, formData: FormData): Promise<FormState> {
-  const email = z.string().trim().email().safeParse(formData.get("email"));
-  if (!email.success) return { error: "Indiquez une adresse e-mail valide." };
-  const next = String(formData.get("next") ?? "");
-  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "";
-  if (!(await repo.allow("connexion", await visitorKey("connexion"), 5, 3600))) {
+/** Chemin interne uniquement, pour ne pas servir de redirection ouverte. */
+function safeNext(raw: FormDataEntryValue | null): string {
+  const next = String(raw ?? "");
+  return next.startsWith("/") && !next.startsWith("//") ? next : "";
+}
+
+const emailSchema = z.string().trim().toLowerCase().email("Indiquez une adresse e-mail valide.");
+const passwordSchema = z.string().min(8, "Le mot de passe doit faire au moins 8 caractères.").max(72, "Le mot de passe est trop long.");
+
+/**
+ * Adresse de retour des e-mails (confirmation, mot de passe oublié). Elle porte toujours un « ? » :
+ * les modèles d'e-mail y ajoutent `&token_hash=…&type=…` (voir README).
+ */
+const callbackUrl = (next: string) => `${siteUrl()}/auth/callback?next=${encodeURIComponent(next || "/espace")}`;
+
+export async function signIn(_prev: FormState, formData: FormData): Promise<FormState> {
+  const email = emailSchema.safeParse(formData.get("email"));
+  const password = String(formData.get("password") ?? "");
+  if (!email.success || !password) return { error: "Indiquez votre adresse e-mail et votre mot de passe." };
+  if (!(await repo.allow("connexion", await visitorKey("connexion"), 10, 900))) {
+    return { error: "Trop d’essais. Patientez un quart d’heure avant de réessayer." };
+  }
+  const { error } = await (await supabaseServer()).auth.signInWithPassword({ email: email.data, password });
+  if (error) {
+    if (error.code === "email_not_confirmed") {
+      return { error: "Votre adresse n’est pas encore confirmée. Cliquez sur le lien reçu par e-mail lors de l’inscription." };
+    }
+    return { error: "E-mail ou mot de passe incorrect." };
+  }
+  redirect(safeNext(formData.get("next")) || "/espace");
+}
+
+const signUpSchema = z.object({
+  firstName: z.string().trim().min(1, "Indiquez votre prénom.").max(60),
+  email: emailSchema,
+  password: passwordSchema,
+});
+
+export async function signUp(_prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = signUpSchema.safeParse(formObject(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Formulaire incomplet." };
+  if (!(await repo.allow("inscription", await visitorKey("inscription"), 5, 3600))) {
+    return { error: "Trop de comptes créés depuis cette connexion. Réessayez dans une heure." };
+  }
+  const next = safeNext(formData.get("next"));
+  const { data, error } = await (await supabaseServer()).auth.signUp({
+    email: parsed.data.email,
+    password: parsed.data.password,
+    options: { data: { full_name: parsed.data.firstName }, emailRedirectTo: callbackUrl(next) },
+  });
+  if (error) {
+    if (error.code === "weak_password") return { error: "Ce mot de passe est trop facile à deviner. Choisissez-en un autre." };
+    if (error.code === "over_email_send_rate_limit") return { error: "Trop d’e-mails envoyés. Réessayez dans quelques minutes." };
+    return { error: "Le compte n’a pas pu être créé. Réessayez dans quelques minutes." };
+  }
+  // Confirmation par e-mail désactivée : la session est ouverte tout de suite.
+  if (data.session) redirect(next || "/espace");
+  // Par prudence, la réponse est la même que l'adresse ait déjà un compte ou non.
+  return {
+    ok: true,
+    message: `Dernière étape : ouvrez l’e-mail envoyé à ${parsed.data.email} et cliquez sur le lien pour confirmer votre adresse. Si vous aviez déjà un compte, connectez-vous simplement.`,
+  };
+}
+
+export async function requestPasswordReset(_prev: FormState, formData: FormData): Promise<FormState> {
+  const email = emailSchema.safeParse(formData.get("email"));
+  if (!email.success) return { error: email.error.issues[0]?.message };
+  if (!(await repo.allow("mot-de-passe", await visitorKey("mot-de-passe"), 5, 3600))) {
     return { error: "Trop de demandes. Réessayez dans une heure." };
   }
-  const { error } = await (await supabaseServer()).auth.signInWithOtp({
-    email: email.data,
-    options: { emailRedirectTo: `${siteUrl()}/auth/callback${safeNext ? `?next=${encodeURIComponent(safeNext)}` : ""}` },
-  });
-  if (error) return { error: "L’e-mail n’a pas pu être envoyé. Réessayez dans quelques minutes." };
-  return { ok: true, message: `Un lien de connexion vient d’être envoyé à ${email.data}.` };
+  await (await supabaseServer()).auth.resetPasswordForEmail(email.data, { redirectTo: callbackUrl("/connexion/nouveau-mot-de-passe") });
+  // Même réponse que l'adresse existe ou non, pour ne pas révéler qui a un compte.
+  return { ok: true, message: `Si un compte existe pour ${email.data}, un e-mail vient de partir avec un lien pour choisir un nouveau mot de passe.` };
+}
+
+export async function updatePassword(_prev: FormState, formData: FormData): Promise<FormState> {
+  const password = passwordSchema.safeParse(formData.get("password"));
+  if (!password.success) return { error: password.error.issues[0]?.message };
+  if (password.data !== formData.get("confirm")) return { error: "Les deux mots de passe ne sont pas identiques." };
+  const db = await supabaseServer();
+  const {
+    data: { user },
+  } = await db.auth.getUser();
+  if (!user) return { error: "Le lien a expiré. Redemandez un e-mail depuis « Mot de passe oublié »." };
+  const { error } = await db.auth.updateUser({ password: password.data });
+  if (error) {
+    if (error.code === "same_password") return { error: "Choisissez un mot de passe différent de l’ancien." };
+    if (error.code === "weak_password") return { error: "Ce mot de passe est trop facile à deviner. Choisissez-en un autre." };
+    return { error: "Le mot de passe n’a pas pu être changé. Réessayez." };
+  }
+  redirect("/espace?mot-de-passe=1");
 }
 
 // --- Gestes des visiteurs --------------------------------------------------------

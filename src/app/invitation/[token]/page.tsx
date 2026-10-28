@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { acceptInvitation } from "@/app/actions";
+import { AuthForms } from "@/components/auth-forms";
 import { SiteHeader } from "@/components/site-header";
 import { isDemo, repo } from "@/lib/repo";
 import { getViewer } from "@/lib/session";
@@ -46,12 +47,18 @@ export default async function Invitation(props: PageProps<"/invitation/[token]">
               ) : viewer.kind === "distributor" ? (
                 <p className="text-sm text-muted">Vous êtes connecté en tant que professionnel. Ce lien est destiné à la famille.</p>
               ) : (
-                <div className="flex flex-col gap-2">
-                  <Link href={`/connexion?next=${encodeURIComponent(next)}`} className="btn btn-amber self-start">
-                    Continuer
-                  </Link>
-                  {!isDemo && (
-                    <p className="text-sm text-muted">Il suffit de votre adresse e-mail : vous recevrez un lien de connexion, sans mot de passe.</p>
+                <div className="flex flex-col gap-3">
+                  {isDemo ? (
+                    <Link href={`/connexion?next=${encodeURIComponent(next)}`} className="btn btn-amber self-start">
+                      Continuer
+                    </Link>
+                  ) : (
+                    <>
+                      <p className="text-sm text-ink-2">
+                        Créez votre compte (ou connectez-vous si vous en avez déjà un) : l’invitation sera acceptée aussitôt.
+                      </p>
+                      <AuthForms next={`/invitation/${token}/accepter`} defaultTab="inscription" />
+                    </>
                   )}
                 </div>
               ))}

@@ -10,16 +10,22 @@ import { moderateMessage } from "../actions";
 
 export const metadata: Metadata = { title: "Mon espace", robots: { index: false } };
 
-export default async function FamilySpace() {
+export default async function FamilySpace(props: PageProps<"/espace">) {
   const viewer = await getViewer();
   if (viewer.kind === "distributor") redirect("/pro");
   if (viewer.kind !== "family") redirect("/connexion");
   const { tombs, pending, orders } = await repo.familyOverview(viewer);
+  const passwordChanged = (await props.searchParams)["mot-de-passe"] === "1";
 
   return (
     <>
       <SiteHeader viewer={viewer} demo={isDemo} />
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-4 py-10">
+        {passwordChanged && (
+          <p role="status" className="border border-green bg-green-soft p-3 text-sm text-green">
+            Votre nouveau mot de passe est enregistré.
+          </p>
+        )}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="eyebrow">Mon espace</p>
