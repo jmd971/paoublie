@@ -4,20 +4,40 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { normalizeCode, siteUrl } from "@/lib/codes";
+import { looksLikeSpam, visitorKey } from "@/lib/abuse";
+import { invitationUrl, normalizeCode, siteUrl } from "@/lib/codes";
 import { isDemo, repo } from "@/lib/repo";
 import { DEMO_ROLE_COOKIE, getViewer } from "@/lib/session";
 import { supabaseServer } from "@/lib/supabase/server";
+import type { MediaKind, UploadTarget, Viewer } from "@/lib/types";
+import { checkUpload } from "@/lib/uploads";
 
 export type FormState = { ok?: boolean; error?: string; message?: string };
+
+/** Champ vide d'un formulaire → undefined, pour que les champs facultatifs le restent. */
+function formObject(formData: FormData): Record<string, unknown> {
+  return Object.fromEntries(
+    [...formData.entries()].map(([k, v]) => [k, typeof v === "string" && v.trim() === "" ? undefined : v]),
+  );
+}
+
+async function familyViewer(): Promise<Extract<Viewer, { kind: "family" }>> {
+  const viewer = await getViewer();
+  if (viewer.kind !== "family") throw new Error("Connectez-vous avec votre compte famille.");
+  return viewer;
+}
+
+const errorMessage = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
 // --- Session ------------------------------------------------------------------
 
 export async function setDemoRole(formData: FormData) {
   if (!isDemo) redirect("/connexion");
-  const role = formData.get("role") === "distributor" ? "distributor" : "family";
+  const asked = String(formData.get("role"));
+  const role = ["family", "family2", "distributor"].includes(asked) ? asked : "family";
   (await cookies()).set(DEMO_ROLE_COOKIE, role, { httpOnly: true, sameSite: "lax", path: "/" });
-  redirect(role === "distributor" ? "/pro" : "/espace");
+  const next = String(formData.get("next") ?? "");
+  redirect(next.startsWith("/") && !next.startsWith("//") ? next : role === "distributor" ? "/pro" : "/espace");
 }
 
 export async function signOut() {
@@ -29,29 +49,120 @@ export async function signOut() {
   redirect("/");
 }
 
-export async function signInWithEmail(_prev: FormState, formData: FormData): Promise<FormState> {
-  const email = z.string().trim().email().safeParse(formData.get("email"));
-  if (!email.success) return { error: "Indiquez une adresse e-mail valide." };
-  const { error } = await (await supabaseServer()).auth.signInWithOtp({
-    email: email.data,
-    options: { emailRedirectTo: `${siteUrl()}/auth/callback` },
+/** Chemin interne uniquement, pour ne pas servir de redirection ouverte. */
+function safeNext(raw: FormDataEntryValue | null): string {
+  const next = String(raw ?? "");
+  return next.startsWith("/") && !next.startsWith("//") ? next : "";
+}
+
+const emailSchema = z.string().trim().toLowerCase().email("Indiquez une adresse e-mail valide.");
+const passwordSchema = z.string().min(8, "Le mot de passe doit faire au moins 8 caractères.").max(72, "Le mot de passe est trop long.");
+
+/**
+ * Adresse de retour des e-mails (confirmation, mot de passe oublié). Elle porte toujours un « ? » :
+ * les modèles d'e-mail y ajoutent `&token_hash=…&type=…` (voir README).
+ */
+const callbackUrl = (next: string) => `${siteUrl()}/auth/callback?next=${encodeURIComponent(next || "/espace")}`;
+
+export async function signIn(_prev: FormState, formData: FormData): Promise<FormState> {
+  const email = emailSchema.safeParse(formData.get("email"));
+  const password = String(formData.get("password") ?? "");
+  if (!email.success || !password) return { error: "Indiquez votre adresse e-mail et votre mot de passe." };
+  if (!(await repo.allow("connexion", await visitorKey("connexion"), 10, 900))) {
+    return { error: "Trop d’essais. Patientez un quart d’heure avant de réessayer." };
+  }
+  const { error } = await (await supabaseServer()).auth.signInWithPassword({ email: email.data, password });
+  if (error) {
+    if (error.code === "email_not_confirmed") {
+      return { error: "Votre adresse n’est pas encore confirmée. Cliquez sur le lien reçu par e-mail lors de l’inscription." };
+    }
+    return { error: "E-mail ou mot de passe incorrect." };
+  }
+  redirect(safeNext(formData.get("next")) || "/espace");
+}
+
+const signUpSchema = z.object({
+  firstName: z.string().trim().min(1, "Indiquez votre prénom.").max(60),
+  email: emailSchema,
+  password: passwordSchema,
+});
+
+export async function signUp(_prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = signUpSchema.safeParse(formObject(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Formulaire incomplet." };
+  if (!(await repo.allow("inscription", await visitorKey("inscription"), 5, 3600))) {
+    return { error: "Trop de comptes créés depuis cette connexion. Réessayez dans une heure." };
+  }
+  const next = safeNext(formData.get("next"));
+  const { data, error } = await (await supabaseServer()).auth.signUp({
+    email: parsed.data.email,
+    password: parsed.data.password,
+    options: { data: { full_name: parsed.data.firstName }, emailRedirectTo: callbackUrl(next) },
   });
-  if (error) return { error: "L’e-mail n’a pas pu être envoyé. Réessayez dans quelques minutes." };
-  return { ok: true, message: `Un lien de connexion vient d’être envoyé à ${email.data}.` };
+  if (error) {
+    if (error.code === "weak_password") return { error: "Ce mot de passe est trop facile à deviner. Choisissez-en un autre." };
+    if (error.code === "over_email_send_rate_limit") return { error: "Trop d’e-mails envoyés. Réessayez dans quelques minutes." };
+    return { error: "Le compte n’a pas pu être créé. Réessayez dans quelques minutes." };
+  }
+  // Confirmation par e-mail désactivée : la session est ouverte tout de suite.
+  if (data.session) redirect(next || "/espace");
+  // Par prudence, la réponse est la même que l'adresse ait déjà un compte ou non.
+  return {
+    ok: true,
+    message: `Dernière étape : ouvrez l’e-mail envoyé à ${parsed.data.email} et cliquez sur le lien pour confirmer votre adresse. Si vous aviez déjà un compte, connectez-vous simplement.`,
+  };
+}
+
+export async function requestPasswordReset(_prev: FormState, formData: FormData): Promise<FormState> {
+  const email = emailSchema.safeParse(formData.get("email"));
+  if (!email.success) return { error: email.error.issues[0]?.message };
+  if (!(await repo.allow("mot-de-passe", await visitorKey("mot-de-passe"), 5, 3600))) {
+    return { error: "Trop de demandes. Réessayez dans une heure." };
+  }
+  await (await supabaseServer()).auth.resetPasswordForEmail(email.data, { redirectTo: callbackUrl("/connexion/nouveau-mot-de-passe") });
+  // Même réponse que l'adresse existe ou non, pour ne pas révéler qui a un compte.
+  return { ok: true, message: `Si un compte existe pour ${email.data}, un e-mail vient de partir avec un lien pour choisir un nouveau mot de passe.` };
+}
+
+export async function updatePassword(_prev: FormState, formData: FormData): Promise<FormState> {
+  const password = passwordSchema.safeParse(formData.get("password"));
+  if (!password.success) return { error: password.error.issues[0]?.message };
+  if (password.data !== formData.get("confirm")) return { error: "Les deux mots de passe ne sont pas identiques." };
+  const db = await supabaseServer();
+  const {
+    data: { user },
+  } = await db.auth.getUser();
+  if (!user) return { error: "Le lien a expiré. Redemandez un e-mail depuis « Mot de passe oublié »." };
+  const { error } = await db.auth.updateUser({ password: password.data });
+  if (error) {
+    if (error.code === "same_password") return { error: "Choisissez un mot de passe différent de l’ancien." };
+    if (error.code === "weak_password") return { error: "Ce mot de passe est trop facile à deviner. Choisissez-en un autre." };
+    return { error: "Le mot de passe n’a pas pu être changé. Réessayez." };
+  }
+  redirect("/espace?mot-de-passe=1");
 }
 
 // --- Gestes des visiteurs --------------------------------------------------------
 
-export async function lightCandle(memorialId: string, path: string): Promise<number> {
-  const n = await repo.lightCandle(memorialId);
+type Gesture = { count: number; limited: boolean };
+
+async function gesture(kind: "bougie" | "fleur", memorialId: string, path: string): Promise<Gesture> {
+  // Une bougie et une fleur par visiteur, par défunt et par jour.
+  if (!(await repo.allow(kind, await visitorKey(`${kind}:${memorialId}`), 1, 86_400))) {
+    const c = await repo.getCounters(memorialId);
+    return { count: kind === "bougie" ? c.candles : c.flowers, limited: true };
+  }
+  const count = kind === "bougie" ? await repo.lightCandle(memorialId) : await repo.dropFlower(memorialId);
   revalidatePath(path);
-  return n;
+  return { count, limited: false };
 }
 
-export async function dropFlower(memorialId: string, path: string): Promise<number> {
-  const n = await repo.dropFlower(memorialId);
-  revalidatePath(path);
-  return n;
+export async function lightCandle(memorialId: string, path: string): Promise<Gesture> {
+  return gesture("bougie", memorialId, path);
+}
+
+export async function dropFlower(memorialId: string, path: string): Promise<Gesture> {
+  return gesture("fleur", memorialId, path);
 }
 
 const messageSchema = z.object({
@@ -59,21 +170,26 @@ const messageSchema = z.object({
   authorName: z.string().trim().min(1, "Indiquez votre prénom.").max(80),
   authorPlace: z.string().trim().max(80).optional(),
   body: z.string().trim().min(1, "Écrivez votre message.").max(1500, "Le message est trop long (1 500 caractères au plus)."),
+  consent: z.literal("on", { message: "Cochez la case pour accepter que la famille lise et publie votre message." }),
 });
 
 export async function submitMessage(_prev: FormState, formData: FormData): Promise<FormState> {
-  const parsed = messageSchema.safeParse({
-    memorialId: formData.get("memorialId"),
-    authorName: formData.get("authorName"),
-    authorPlace: formData.get("authorPlace") || undefined,
-    body: formData.get("body"),
-  });
+  // Pièges à robots : un champ invisible qui doit rester vide, et un délai minimal de saisie.
+  const startedAt = Number(formData.get("startedAt"));
+  const tooFast = !startedAt || Date.now() - startedAt < 3000;
+  if (formData.get("website") || tooFast) return { ok: true, message: "Merci. Votre message a été transmis à la famille." };
+
+  const parsed = messageSchema.safeParse(formObject(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Message incomplet." };
+  if (looksLikeSpam(parsed.data.body)) return { error: "Les liens vers d’autres sites ne sont pas acceptés dans le livre d’or." };
+  if (!(await repo.allow("message", await visitorKey("message"), 5, 3600))) {
+    return { error: "Vous avez déjà envoyé plusieurs messages. Réessayez un peu plus tard." };
+  }
   await repo.submitMessage(parsed.data.memorialId, parsed.data);
   return { ok: true, message: "Merci. Votre message apparaîtra dès que la famille l’aura validé." };
 }
 
-// --- Famille --------------------------------------------------------------------
+// --- Famille : modération et création ------------------------------------------
 
 export async function moderateMessage(formData: FormData) {
   const viewer = await getViewer();
@@ -84,13 +200,20 @@ export async function moderateMessage(formData: FormData) {
   revalidatePath("/m", "layout");
 }
 
+const gender = z.enum(["f", "m"]).optional();
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide.")
+  .optional();
+
 const memorialSchema = z.object({
   code: z.string().optional(),
   firstName: z.string().trim().min(1, "Indiquez le prénom.").max(60),
   lastName: z.string().trim().min(1, "Indiquez le nom.").max(60),
   nickname: z.string().trim().max(60).optional(),
-  birthDate: z.string().optional(),
-  deathDate: z.string().optional(),
+  gender,
+  birthDate: isoDate,
+  deathDate: isoDate,
   commune: z.string().trim().min(1, "Indiquez la commune.").max(60),
   cemetery: z.string().trim().min(1, "Indiquez le cimetière.").max(120),
   locationLabel: z.string().trim().max(80).optional(),
@@ -102,10 +225,7 @@ const memorialSchema = z.object({
 export async function createMemorial(_prev: FormState, formData: FormData): Promise<FormState> {
   const viewer = await getViewer();
   if (viewer.kind === "anonymous") return { error: "Connectez-vous pour créer un mémorial." };
-  const raw = Object.fromEntries(
-    [...formData.entries()].map(([k, v]) => [k, typeof v === "string" && v.trim() === "" ? undefined : v]),
-  );
-  const parsed = memorialSchema.safeParse(raw);
+  const parsed = memorialSchema.safeParse(formObject(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Formulaire incomplet." };
   let code: string | undefined;
   if (parsed.data.code) {
@@ -113,17 +233,195 @@ export async function createMemorial(_prev: FormState, formData: FormData): Prom
     if (!normalized) return { error: "Le code de plaque doit contenir 5 à 8 lettres ou chiffres." };
     code = normalized;
   }
-  let result: { code: string; slug: string };
+  let tombId: string;
   try {
-    result = await repo.createMemorial(viewer, { ...parsed.data, code });
+    ({ tombId } = await repo.createMemorial(viewer, { ...parsed.data, code }));
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Le mémorial n’a pas pu être créé." };
+    return { error: errorMessage(e, "Le mémorial n’a pas pu être créé.") };
   }
-  revalidatePath(viewer.kind === "distributor" ? "/pro" : "/espace");
-  redirect(`/m/${result.code}/${result.slug}?nouveau=1`);
+  if (viewer.kind === "distributor") {
+    revalidatePath("/pro");
+    redirect(`/pro/tombe/${tombId}?nouveau=1`);
+  }
+  revalidatePath("/espace");
+  redirect(`/espace/tombe/${tombId}?nouveau=1`);
+}
+
+const extraSchema = z.object({
+  tombId: z.string().min(1),
+  firstName: z.string().trim().min(1, "Indiquez le prénom.").max(60),
+  lastName: z.string().trim().min(1, "Indiquez le nom.").max(60),
+  nickname: z.string().trim().max(60).optional(),
+  gender,
+  relation: z.string().trim().max(60).optional(),
+  birthDate: isoDate,
+  deathDate: isoDate,
+});
+
+export async function addMemorialToTomb(_prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = extraSchema.safeParse(formObject(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Formulaire incomplet." };
+  const { tombId, ...input } = parsed.data;
+  let id: string;
+  try {
+    ({ id } = await repo.addMemorialToTomb(await familyViewer(), tombId, input));
+  } catch (e) {
+    return { error: errorMessage(e, "Le défunt n’a pas pu être ajouté.") };
+  }
+  revalidatePath(`/espace/tombe/${tombId}`);
+  redirect(`/espace/tombe/${tombId}/${id}`);
+}
+
+// --- Famille : contenu de la page ------------------------------------------------
+
+const patchSchema = z.object({
+  memorialId: z.string().min(1),
+  tombId: z.string().min(1),
+  firstName: z.string().trim().min(1, "Indiquez le prénom.").max(60),
+  lastName: z.string().trim().min(1, "Indiquez le nom.").max(60),
+  nickname: z.string().trim().max(60).optional(),
+  gender,
+  relation: z.string().trim().max(60).optional(),
+  birthDate: isoDate,
+  deathDate: isoDate,
+  birthPlace: z.string().trim().max(60).optional(),
+  quote: z.string().trim().max(200).optional(),
+  quoteTranslation: z.string().trim().max(300).optional(),
+  chapters: z
+    .array(
+      z.object({
+        years: z.string().trim().max(30),
+        title: z.string().trim().max(100),
+        text: z.string().trim().max(5000),
+        // Conservés tels quels : légende et image déjà associées au chapitre.
+        caption: z.string().max(200).optional(),
+        image: z.string().max(2000).optional(),
+      }),
+    )
+    .max(30),
+  loves: z.array(z.object({ title: z.string().trim().max(100), text: z.string().trim().max(1000) })).max(20),
+});
+
+export async function updateMemorial(_prev: FormState, formData: FormData): Promise<FormState> {
+  let lists: { chapters: unknown; loves: unknown };
+  try {
+    lists = { chapters: JSON.parse(String(formData.get("chapters") ?? "[]")), loves: JSON.parse(String(formData.get("loves") ?? "[]")) };
+  } catch {
+    return { error: "Le formulaire est incomplet. Rechargez la page." };
+  }
+  const parsed = patchSchema.safeParse({ ...formObject(formData), ...lists });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Formulaire incomplet." };
+  const { memorialId, tombId, ...patch } = parsed.data;
+  try {
+    await repo.updateMemorial(await familyViewer(), memorialId, {
+      ...patch,
+      chapters: patch.chapters.filter((c) => c.title || c.text),
+      loves: patch.loves.filter((l) => l.title || l.text),
+    });
+  } catch (e) {
+    return { error: errorMessage(e, "Les modifications n’ont pas pu être enregistrées.") };
+  }
+  revalidatePath(`/espace/tombe/${tombId}`, "layout");
+  revalidatePath("/m", "layout");
+  return { ok: true, message: "Modifications enregistrées." };
+}
+
+// --- Famille : photos, vidéos, voix -----------------------------------------------
+
+const kindSchema = z.enum(["photo", "video", "audio"]);
+
+/** Étape 1 de l'envoi : vérifie le fichier et donne où l'envoyer. */
+export async function prepareUpload(
+  memorialId: string,
+  kind: MediaKind,
+  file: { type: string; name: string; size: number },
+): Promise<{ error: string } | { target: UploadTarget & { path?: string }; type: string }> {
+  try {
+    const k = kindSchema.parse(kind);
+    const check = checkUpload(k, file.type, file.name, file.size);
+    if (!check.ok) return { error: check.error };
+    const target = await repo.prepareUpload(await familyViewer(), memorialId, check.ext);
+    return { target, type: check.type };
+  } catch (e) {
+    return { error: errorMessage(e, "L’envoi n’a pas pu commencer.") };
+  }
+}
+
+/** Étape 2 : enregistre le fichier envoyé (ou, en démonstration, le reçoit directement). */
+export async function saveMedia(formData: FormData): Promise<FormState> {
+  try {
+    const viewer = await familyViewer();
+    const memorialId = String(formData.get("memorialId"));
+    const kind = kindSchema.parse(formData.get("kind"));
+    const purpose = formData.get("purpose") === "portrait" ? "portrait" : "media";
+    const caption = String(formData.get("caption") ?? "").trim().slice(0, 200);
+    const album = String(formData.get("album") ?? "").trim().slice(0, 60) || undefined;
+    const path = formData.get("path");
+    const file = formData.get("file");
+
+    let url: string;
+    let storagePath: string | undefined;
+    if (typeof path === "string" && path) {
+      storagePath = path;
+      url = repo.publicUrl(path);
+    } else if (isDemo && file instanceof File) {
+      const check = checkUpload(kind, file.type, file.name, file.size);
+      if (!check.ok) return { error: check.error };
+      if (file.size > 4 * 1024 * 1024) return { error: "En démonstration, les fichiers sont limités à 4 Mo." };
+      url = `data:${check.type};base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`;
+    } else {
+      return { error: "Aucun fichier reçu." };
+    }
+
+    if (purpose === "portrait") await repo.setPortrait(viewer, memorialId, url);
+    else await repo.addMedia(viewer, memorialId, { kind, caption: caption || "Sans légende", album, url, storagePath });
+  } catch (e) {
+    return { error: errorMessage(e, "Le fichier n’a pas pu être enregistré.") };
+  }
+  revalidatePath("/espace", "layout");
+  revalidatePath("/m", "layout");
+  return { ok: true };
+}
+
+export async function deleteMedia(formData: FormData) {
+  await repo.deleteMedia(await familyViewer(), String(formData.get("mediaId")));
+  revalidatePath("/espace", "layout");
+  revalidatePath("/m", "layout");
+}
+
+// --- Invitations --------------------------------------------------------------------
+
+export async function createInvitation(
+  tombId: string,
+  role: "guardian" | "member",
+): Promise<{ error: string } | { url: string }> {
+  try {
+    const viewer = await getViewer();
+    // Une famille n'invite que des proches ; seul le distributeur remet la garde de la page.
+    const effective = viewer.kind === "distributor" ? "guardian" : role;
+    const token = await repo.createInvitation(viewer, tombId, effective);
+    return { url: invitationUrl(token) };
+  } catch (e) {
+    return { error: errorMessage(e, "Le lien n’a pas pu être créé.") };
+  }
+}
+
+export async function acceptInvitation(formData: FormData) {
+  const viewer = await getViewer();
+  const token = String(formData.get("token") ?? "");
+  if (viewer.kind !== "family") redirect(`/connexion?next=${encodeURIComponent(`/invitation/${token}`)}`);
+  const tombId = await repo.acceptInvitation(viewer, token);
+  revalidatePath("/espace", "layout");
+  redirect(`/espace/tombe/${tombId}?bienvenue=1`);
 }
 
 // --- Distributeurs ------------------------------------------------------------------
+
+export async function markOrderPaid(formData: FormData) {
+  const viewer = await getViewer();
+  await repo.markOrderPaid(viewer, String(formData.get("orderId")));
+  revalidatePath("/pro", "layout");
+}
 
 export async function createQrBatch(formData: FormData) {
   const viewer = await getViewer();

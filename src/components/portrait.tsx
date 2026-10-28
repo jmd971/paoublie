@@ -1,5 +1,16 @@
+import type { Gender } from "@/lib/types";
+
 /** Portrait par défaut quand la famille n'a pas encore choisi de photo. */
-export function Portrait({ variant = "femme", className = "" }: { variant?: "femme" | "homme"; className?: string }) {
+export function Portrait({ variant = "neutre", className = "" }: { variant?: "femme" | "homme" | "neutre"; className?: string }) {
+  if (variant === "neutre") {
+    return (
+      <svg viewBox="0 0 200 200" className={className} aria-hidden="true">
+        <rect width="200" height="200" fill="#D8DBD6" />
+        <path d="M40 200 C46 152 72 138 100 138 C128 138 154 152 160 200Z" fill="#8A938C" />
+        <ellipse cx="100" cy="96" rx="30" ry="35" fill="#A7AFA9" />
+      </svg>
+    );
+  }
   if (variant === "homme") {
     return (
       <svg viewBox="0 0 200 200" className={className} aria-hidden="true">
@@ -27,6 +38,17 @@ export function Portrait({ variant = "femme", className = "" }: { variant?: "fem
       <circle cx="129" cy="106" r="4" fill="#E0A83A" />
     </svg>
   );
+}
+
+export const portraitVariant = (g?: Gender) => (g === "f" ? "femme" : g === "m" ? "homme" : "neutre");
+
+/** Photo du défunt si la famille en a mis une, sinon le portrait dessiné. */
+export function Face({ url, gender, alt = "", className = "" }: { url?: string; gender?: Gender; alt?: string; className?: string }) {
+  if (url) {
+    // eslint-disable-next-line @next/next/no-img-element -- photo envoyée par la famille
+    return <img src={url} alt={alt} className={`${className} object-cover`} />;
+  }
+  return <Portrait variant={portraitVariant(gender)} className={className} />;
 }
 
 /** Image de remplacement en attendant les vraies photos de la famille. */

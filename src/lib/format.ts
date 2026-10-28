@@ -25,3 +25,8 @@ export function timeAgo(iso: string, now = Date.now()): string {
 export function count(n: number): string {
   return new Intl.NumberFormat("fr-FR").format(n);
 }
+
+/** « dite Man Léo », « dit Ti Jo », ou le surnom entre guillemets si le genre n'est pas précisé. */
+export function nicknameLabel(nickname: string, gender?: "f" | "m"): string {
+  return gender === "f" ? `dite ${nickname}` : gender === "m" ? `dit ${nickname}` : `« ${nickname} »`;
+}

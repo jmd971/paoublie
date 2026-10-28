@@ -71,13 +71,21 @@ export default async function ProSpace() {
                 {orders.map((o) => (
                   <tr key={o.id} className="border-t border-rule">
                     <td className="px-4 py-3">{dateFmt.format(new Date(o.createdAt))}</td>
-                    <td className="px-4 py-3">{o.familyName}</td>
+                    <td className="px-4 py-3">
+                      {o.tombId ? (
+                        <Link href={`/pro/tombe/${o.tombId}`} className="underline-offset-2 hover:underline">
+                          {o.familyName}
+                        </Link>
+                      ) : (
+                        o.familyName
+                      )}
+                    </td>
                     <td className="px-4 py-3">{FORMULAS[o.formula].name}</td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums">{euros(o.amountTtcCents)}</td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums">{euros(o.commissionCents)}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 text-xs font-medium ${o.status === "paid" ? "bg-green-soft text-green" : "bg-amber-soft text-amber-ink"}`}>
-                        {o.status === "paid" ? "Payée" : o.status === "pending" ? "En attente" : "Annulée"}
+                        {o.status === "paid" ? "Réglée" : o.status === "pending" ? "En attente" : "Annulée"}
                       </span>
                     </td>
                   </tr>
@@ -98,9 +106,14 @@ export default async function ProSpace() {
                   <span>
                     Famille {t.familyName}
                     <span className="text-sm text-muted"> · {t.memorials.map((m) => m.firstName).join(", ")} · {t.cemetery}</span>
+                    <span
+                      className={`ml-2 px-2 py-0.5 text-xs font-medium ${t.handedOver ? "bg-green-soft text-green" : "bg-amber-soft text-amber-ink"}`}
+                    >
+                      {t.handedOver ? "Remis à la famille" : "À remettre à la famille"}
+                    </span>
                   </span>
-                  <Link href={`/m/${t.code}`} className="text-sm font-medium text-green">
-                    Voir
+                  <Link href={`/pro/tombe/${t.id}`} className="text-sm font-medium text-green">
+                    Suivre
                   </Link>
                 </li>
               ))}

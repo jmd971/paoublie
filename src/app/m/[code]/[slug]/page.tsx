@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { PhotoPlaceholder, Portrait } from "@/components/portrait";
+import { Face, PhotoPlaceholder } from "@/components/portrait";
+import { Restricted } from "@/components/restricted";
 import { normalizeCode } from "@/lib/codes";
-import { count, formatDate, lifeSpan, timeAgo } from "@/lib/format";
+import { count, formatDate, lifeSpan, nicknameLabel, timeAgo } from "@/lib/format";
 import { repo } from "@/lib/repo";
+import { RESTRICTED } from "@/lib/types";
 import { Gestures } from "./gestures";
 import { Guestbook } from "./guestbook";
 import { Tabs } from "./tabs";
@@ -18,10 +20,11 @@ async function load(props: PageProps<"/m/[code]/[slug]">) {
 export async function generateMetadata(props: PageProps<"/m/[code]/[slug]">): Promise<Metadata> {
   const page = await load(props);
   if (!page) return { title: "Mémorial introuvable" };
+  if (page === RESTRICTED) return { title: "Page familiale", robots: { index: false } };
   const m = page.memorial;
   return {
-    title: `${m.firstName} ${m.lastName}${m.nickname ? `, dite ${m.nickname}` : ""}`,
-    description: `Mémorial de ${m.firstName} ${m.lastName} (${lifeSpan(m.birthDate, m.deathDate)}), ${page.tomb.cemetery}.`,
+    title: `${m.firstName} ${m.lastName}${m.nickname ? `, ${nicknameLabel(m.nickname, m.gender)}` : ""}`,
+    description: `Mémorial de ${[`${m.firstName} ${m.lastName}`, lifeSpan(m.birthDate, m.deathDate), page.tomb.cemetery].filter(Boolean).join(", ")}.`,
     robots: { index: page.tomb.visibility === "public" },
   };
 }
@@ -29,6 +32,10 @@ export async function generateMetadata(props: PageProps<"/m/[code]/[slug]">): Pr
 export default async function MemorialPage(props: PageProps<"/m/[code]/[slug]">) {
   const page = await load(props);
   if (!page) notFound();
+  if (page === RESTRICTED) {
+    const { code, slug } = await props.params;
+    return <Restricted next={`/m/${code}/${slug}`} />;
+  }
   const { tomb, memorial: m, media, messages, siblings } = page;
   const isNew = (await props.searchParams).nouveau === "1";
   await repo.countVisit(m.id);
@@ -64,13 +71,15 @@ export default async function MemorialPage(props: PageProps<"/m/[code]/[slug]">)
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {photos.map((p, i) => (
               <figure key={p.id} className="relative">
-                {p.url ? (
+                {p.url && p.kind === "video" ? (
+                  <video controls preload="metadata" src={p.url} className="aspect-square w-full bg-black object-cover" aria-label={p.caption} />
+                ) : p.url ? (
                   // eslint-disable-next-line @next/next/no-img-element -- photos hébergées par la famille
-                  <img src={p.url} alt={p.caption} className="aspect-square w-full object-cover" />
+                  <img src={p.url} alt={p.caption} loading="lazy" className="aspect-square w-full object-cover" />
                 ) : (
                   <PhotoPlaceholder label={p.kind === "video" ? "Vidéo" : "Photo"} tone={i} />
                 )}
-                {p.kind === "video" && (
+                {p.kind === "video" && !p.url && (
                   <span className="absolute top-2 left-2 bg-black/75 px-2 py-0.5 font-mono text-[11px] text-white">
                     Vidéo · {p.duration}
                   </span>
@@ -92,7 +101,7 @@ export default async function MemorialPage(props: PageProps<"/m/[code]/[slug]">)
             {audios.map((a) => (
               <li key={a.id} className="flex items-center gap-3 border border-rule bg-surface p-3">
                 {a.url ? (
-                  <audio controls src={a.url} className="w-40" aria-label={a.caption} />
+                  <audio controls preload="metadata" src={a.url} className="w-48 max-w-full" aria-label={a.caption} />
                 ) : (
                   <span className="flex size-10 items-center justify-center rounded-full bg-green text-on-accent" aria-hidden="true">
                     ▶
@@ -159,7 +168,7 @@ export default async function MemorialPage(props: PageProps<"/m/[code]/[slug]">)
                     <Link href={`/m/${tomb.code}/${s.slug}`} className="text-green underline-offset-2 hover:underline">
                       {s.firstName} {s.lastName}
                     </Link>
-                    <span className="text-sm text-muted"> · {lifeSpan(s.birthDate, s.deathDate)}</span>
+                    {lifeSpan(s.birthDate, s.deathDate) && <span className="text-sm text-muted"> · {lifeSpan(s.birthDate, s.deathDate)}</span>}
                   </li>
                 ))}
               </ul>
@@ -174,7 +183,7 @@ export default async function MemorialPage(props: PageProps<"/m/[code]/[slug]">)
     <main className="flex-1">
       {isNew && (
         <p className="bg-green-soft px-4 py-3 text-center text-sm text-green">
-          Le mémorial est créé. Ajoutez maintenant les photos et l’histoire depuis votre espace.
+          Le mémorial est créé. Ajoutez maintenant les photos et l’histoire depuis votre espace famille.
         </p>
       )}
       <header className="bg-granite px-4 pt-6 pb-8 text-center text-on-granite">
@@ -182,17 +191,12 @@ export default async function MemorialPage(props: PageProps<"/m/[code]/[slug]">)
           ‹ Caveau de la famille {tomb.familyName}
         </Link>
         <div className="mx-auto mt-5 size-28 overflow-hidden rounded-full border-4 border-on-granite">
-          {m.portraitUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element -- photo hébergée par la famille
-            <img src={m.portraitUrl} alt={`Portrait de ${m.firstName} ${m.lastName}`} className="size-full object-cover" />
-          ) : (
-            <Portrait className="size-full" />
-          )}
+          <Face url={m.portraitUrl} gender={m.gender} alt={`Portrait de ${m.firstName} ${m.lastName}`} className="size-full" />
         </div>
         <h1 className="mt-4 font-serif text-3xl font-bold">
           {m.firstName} {m.lastName}
         </h1>
-        {m.nickname && <p className="font-serif text-lg text-[#E7C79A] italic">dite {m.nickname}</p>}
+        {m.nickname && <p className="font-serif text-lg text-[#E7C79A] italic">{nicknameLabel(m.nickname, m.gender)}</p>}
         <p className="mt-1 text-sm text-on-granite-2">
           {[formatDate(m.birthDate), formatDate(m.deathDate)].filter(Boolean).join(" · ")}
           {m.birthPlace ? `, ${m.birthPlace}` : ""}

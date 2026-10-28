@@ -2,13 +2,14 @@
 
 import { useActionState } from "react";
 import { createMemorial, type FormState } from "@/app/actions";
+import { Field, GenderField, submitWithoutReset } from "@/components/fields";
 import { FORMULAS, euros } from "@/lib/pricing";
 
 export function MemorialForm({ code, forFamily }: { code?: string; forFamily: boolean }) {
   const [state, action, pending] = useActionState<FormState, FormData>(createMemorial, {});
 
   return (
-    <form action={action} className="flex flex-col gap-8">
+    <form onSubmit={submitWithoutReset(action)} className="flex flex-col gap-8">
       <fieldset className="flex flex-col gap-4">
         <legend className="mb-2 font-serif text-xl font-bold">{forFamily ? "Qui souhaitez-vous honorer ?" : "Le défunt"}</legend>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -16,6 +17,7 @@ export function MemorialForm({ code, forFamily }: { code?: string; forFamily: bo
           <Field label="Nom" name="lastName" required autoComplete="off" />
         </div>
         <Field label="Surnom" name="nickname" hint="Comment l’appelait-on ? Par exemple : Man Nini" />
+        <GenderField />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Date de naissance" name="birthDate" type="date" />
           <Field label="Date de décès" name="deathDate" type="date" />
@@ -86,21 +88,7 @@ export function MemorialForm({ code, forFamily }: { code?: string; forFamily: bo
       <button type="submit" disabled={pending} className="btn btn-amber self-start">
         {pending ? "Création…" : "Créer le mémorial"}
       </button>
-      <p className="text-sm text-muted">Le paiement se fera à la remise de la plaque. Le mémorial est visible dès maintenant.</p>
+      <p className="text-sm text-muted">Le paiement se fait auprès de votre pompe funèbre, à la remise de la plaque. Le mémorial est visible dès maintenant.</p>
     </form>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  ...input
-}: { label: string; hint?: string } & React.InputHTMLAttributes<HTMLInputElement> & { name: string }) {
-  return (
-    <label className="flex flex-col gap-1 text-sm font-medium">
-      {label}
-      <input className="field font-normal" maxLength={120} {...input} />
-      {hint && <span className="text-xs font-normal text-muted">{hint}</span>}
-    </label>
   );
 }

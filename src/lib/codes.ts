@@ -24,10 +24,21 @@ export function slugify(input: string): string {
     .slice(0, 60);
 }
 
+/**
+ * Adresse publique du site, utilisée dans les QR codes et les liens d'invitation.
+ * Sur Vercel, à défaut de NEXT_PUBLIC_SITE_URL, on prend le domaine de production du projet.
+ */
 export function siteUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL ?? "https://paoublie.com").replace(/\/$/, "");
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL;
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+  const url = explicit || (vercel ? `https://${vercel}` : "http://localhost:3000");
+  return url.replace(/\/$/, "");
 }
 
 export function plaqueUrl(code: string): string {
   return `${siteUrl()}/m/${code}`;
+}
+
+export function invitationUrl(token: string): string {
+  return `${siteUrl()}/invitation/${token}`;
 }

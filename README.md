@@ -21,13 +21,29 @@ famille ou comme une pompe funèbre.
 ## Brancher Supabase
 
 1. Créer un projet Supabase (région UE).
-2. Exécuter `supabase/migrations/0001_init.sql` dans l’éditeur SQL.
+2. Exécuter dans l’ordre `supabase/migrations/0001_init.sql` puis `0002_pilote.sql` dans l’éditeur SQL
+   (la seconde crée le bucket `media`, les invitations, l’anti-abus et le profil automatique).
 3. Copier `.env.example` en `.env.local` et remplir les clés.
 4. Créer les distributeurs dans la table `distributors`, puis lier leur compte : `profiles.role = 'distributor'` et
    `profiles.distributor_id`.
 
-La connexion se fait par lien magique envoyé par e-mail. Le profil d’une famille est créé à sa première connexion
-(voir « À faire »).
+La connexion se fait par e-mail et mot de passe (création de compte, « mot de passe oublié »). Le profil d’une famille
+est créé automatiquement à l’inscription. Variables facultatives : `NEXT_PUBLIC_SITE_URL` (adresse publique, sinon l’URL Vercel), `RATE_LIMIT_SALT`
+(sel des empreintes anti-abus), `NEXT_PUBLIC_CONTACT_EMAIL` (contact des pages légales).
+
+### Réglages Supabase pour la connexion
+
+1. **Authentication → URL Configuration** : *Site URL* = `https://paoublie.vercel.app` ; *Redirect URLs* :
+   `https://paoublie.vercel.app/**` et `https://paoublie-*-jean-marcs-projects-b911a161.vercel.app/**`.
+2. **Authentication → Emails → SMTP Settings** : brancher un vrai service d’envoi (Brevo, Resend…). Le service
+   fourni par défaut n’écrit qu’aux membres de l’équipe Supabase, en petite quantité.
+3. **Authentication → Emails → Templates** : pour que les liens marchent même ouverts depuis l’application Gmail
+   (autre navigateur), remplacer le lien des modèles :
+   - *Confirm signup* : `<a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email">Confirmer mon adresse</a>`
+   - *Reset Password* : `<a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=recovery">Choisir un nouveau mot de passe</a>`
+
+   Sans ce changement, tout fonctionne dans le même navigateur ; ouvert ailleurs, la confirmation d’inscription
+   aboutit quand même (on invite à se connecter), mais le lien de mot de passe oublié doit être rouvert sur le même appareil.
 
 ## Organisation du code
 
@@ -35,7 +51,13 @@ La connexion se fait par lien magique envoyé par e-mail. Le profil d’une fami
 |---|---|
 | `src/app/m/[code]` | Page ouverte par le scan : le caveau, puis le mémorial de chaque défunt |
 | `src/app/espace` | Espace famille : mémoriaux, souvenirs à valider, création |
+| `src/app/espace/tombe/[id]` | Gestion d’une tombe : défunts, ajout d’un défunt, invitations des proches ; éditeur et envoi de médias |
+| `src/app/connexion` | Connexion et création de compte (deux onglets), mot de passe oublié, nouveau mot de passe |
+| `src/app/auth/callback` | Retour des liens reçus par e-mail (confirmation, mot de passe oublié) |
+| `src/app/invitation/[token]` | Lien reçu par WhatsApp ou SMS : création du compte sur place, puis acceptation automatique |
 | `src/app/pro` | Espace distributeur : ventes, commissions, plaques en stock, génération de lots |
+| `src/app/pro/tombe/[id]` | Suivi d’une famille : lien de remise, règlement marqué par la pompe funèbre |
+| `src/app/mentions-legales`, `cgu`, `confidentialite` | Pages légales (éditeur dans `src/lib/legal.ts`) |
 | `src/app/api/qr/[code]` | QR code d’une plaque en SVG, pour le fabricant |
 | `src/app/actions.ts` | Toutes les actions serveur (bougies, messages, modération, création, lots de codes) |
 | `src/lib/repo` | Accès aux données : `demo.ts` (mémoire) et `supabase.ts` |
@@ -47,13 +69,16 @@ La connexion se fait par lien magique envoyé par e-mail. Le profil d’une fami
 - Les codes sont générés par lots à l’avance (6 caractères, sans 0/O ni 1/I/L) puis rattachés à une tombe.
 - Un mémorial créé avec une plaque d’un distributeur, ou par le distributeur lui-même, lui est attribué : la commission
   (25 % du HT par défaut) est calculée à la commande.
-- Rien n’est publié dans le livre d’or sans l’accord de la famille.
+- La pompe funèbre crée la page puis la remet à la famille par un lien à usage unique : la personne qui l’ouvre devient
+  gardienne. Le gardien écrit l’histoire, valide le livre d’or et ajoute des défunts (6 au plus par caveau). Les proches
+  invités (lien valable 60 jours) ajoutent photos, vidéos et voix.
+- Rien n’est publié dans le livre d’or sans l’accord de la famille. Anti-abus : champ piège, délai minimal de saisie,
+  un seul lien par message, 5 messages par heure, une bougie et une fleur par visiteur et par jour.
+- Le règlement est encaissé par la pompe funèbre, qui le marque comme réglé dans son espace.
 - Prix TTC avec la TVA de 8,5 % applicable en Guadeloupe (`src/lib/pricing.ts`).
 
 ## À faire
 
-1. Paiement Stripe à la commande, et suivi de la commande jusqu’à la pose.
-2. Création automatique du profil famille à la première connexion (trigger sur `auth.users`).
-3. Envoi de photos, vidéos et vocaux (Supabase Storage) et édition des chapitres.
-4. Invitations de la famille par WhatsApp.
-5. Export du mémorial et réversibilité.
+1. Paiement en ligne Stripe (aujourd’hui : règlement marqué par la pompe funèbre).
+2. Export du mémorial et réversibilité.
+3. Suppression d’une page à la demande du gardien, depuis son espace.

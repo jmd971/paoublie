@@ -10,16 +10,22 @@ import { moderateMessage } from "../actions";
 
 export const metadata: Metadata = { title: "Mon espace", robots: { index: false } };
 
-export default async function FamilySpace() {
+export default async function FamilySpace(props: PageProps<"/espace">) {
   const viewer = await getViewer();
   if (viewer.kind === "distributor") redirect("/pro");
   if (viewer.kind !== "family") redirect("/connexion");
   const { tombs, pending, orders } = await repo.familyOverview(viewer);
+  const passwordChanged = (await props.searchParams)["mot-de-passe"] === "1";
 
   return (
     <>
       <SiteHeader viewer={viewer} demo={isDemo} />
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-4 py-10">
+        {passwordChanged && (
+          <p role="status" className="border border-green bg-green-soft p-3 text-sm text-green">
+            Votre nouveau mot de passe est enregistré.
+          </p>
+        )}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="eyebrow">Mon espace</p>
@@ -35,7 +41,7 @@ export default async function FamilySpace() {
             Souvenirs à valider <span className="font-mono text-base text-amber">{pending.length}</span>
           </h2>
           {pending.length === 0 ? (
-            <p className="text-muted">Aucun message en attente. Les nouveaux messages de la famille et des proches arriveront ici.</p>
+            <p className="text-muted">Aucun message en attente. Les messages laissés dans le livre d’or arriveront ici avant d’être publiés.</p>
           ) : (
             <ul className="flex flex-col gap-3">
               {pending.map((m) => (
@@ -64,9 +70,17 @@ export default async function FamilySpace() {
           {tombs.length === 0 && <p className="text-muted">Vous n’avez pas encore de mémorial.</p>}
           {tombs.map((t) => (
             <div key={t.id} className="border border-rule bg-surface">
-              <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule px-4 py-3">
-                <h3 className="font-semibold">Caveau de la famille {t.familyName}</h3>
-                <span className="font-mono text-xs text-muted">Plaque {t.code}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rule px-4 py-3">
+                <div>
+                  <h3 className="font-semibold">Caveau de la famille {t.familyName}</h3>
+                  <p className="text-xs text-muted">
+                    <span className="font-mono">Plaque {t.code}</span> ·{" "}
+                    {t.role === "guardian" ? "Vous gérez cette page" : "Vous êtes invité comme proche"}
+                  </p>
+                </div>
+                <Link href={`/espace/tombe/${t.id}`} className="btn min-h-10 text-sm">
+                  Gérer et compléter
+                </Link>
               </div>
               <ul>
                 {t.memorials.map((m) => (
@@ -75,7 +89,7 @@ export default async function FamilySpace() {
                       <span className="font-serif text-lg font-bold">
                         {m.firstName} {m.lastName}
                       </span>
-                      <span className="text-sm text-muted"> · {lifeSpan(m.birthDate, m.deathDate)}</span>
+                      {lifeSpan(m.birthDate, m.deathDate) && <span className="text-sm text-muted"> · {lifeSpan(m.birthDate, m.deathDate)}</span>}
                       <span className="block text-xs text-muted">
                         {count(m.visits)} visites · {count(m.candles)} bougies · {count(m.flowers)} fleurs
                       </span>
